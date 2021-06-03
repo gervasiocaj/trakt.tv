@@ -57,7 +57,7 @@ module.exports = class Trakt {
     // Initialize plugins
     _plugins(plugins, options = {}) {
         for (let name in plugins) {
-            if (!plugins.hasOwnProperty(name)) continue;
+            if (!Object.hasOwnProperty.call(plugins, name)) continue;
 
             this[name] = plugins[name];
             this[name].init(this, (options[name] || {}));
