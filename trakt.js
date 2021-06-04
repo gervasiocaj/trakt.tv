@@ -1,7 +1,7 @@
 'use strict';
 
 // requirejs modules
-const got = require('got');
+const axios = require('axios').default
 const crypto = require('crypto');
 const methods = require('./methods.json');
 const sanitizer = require('sanitizer').sanitize;
@@ -24,23 +24,38 @@ module.exports = class Trakt {
             debug: settings.debug || debug,
             endpoint: settings.api_url || defaultUrl,
             pagination: settings.pagination,
-            useragent: settings.useragent || defaultUa
+            useragent: settings.useragent || defaultUa,
+            sanitize: settings.sanitize !== false,
         };
+
+        this._api = axios.create({
+            baseURL: this._settings.endpoint,
+            headers: {
+                'User-Agent': this._settings.useragent,
+                'Content-Type': 'application/json',
+            },
+            transformResponse: [].concat(
+                axios.defaults.transformResponse,
+                (data) => this._settings.sanitize ? this._sanitize(data) : data,
+            ),
+        });
 
         this._construct();
 
-        settings.plugins && this._plugins(settings.plugins, settings.options);
+        if (settings.plugins) {
+            this._plugins(settings.plugins, settings.options);
+        }
     }
 
     // Creates methods for all requests
     _construct() {
-        for (let url in methods) {
+        for (const url in methods) {
             const urlParts = url.split('/');
             const name = urlParts.pop(); // key for function
 
             let tmp = this;
             for (let p = 1; p < urlParts.length; ++p) { // acts like mkdir -p
-                tmp = tmp[urlParts[p]] || (tmp[urlParts[p]] = {});
+                tmp = tmp[urlParts[p]] ||= {};
             }
 
             tmp[name] = (() => {
@@ -56,7 +71,7 @@ module.exports = class Trakt {
 
     // Initialize plugins
     _plugins(plugins, options = {}) {
-        for (let name in plugins) {
+        for (const name in plugins) {
             if (!Object.hasOwnProperty.call(plugins, name)) continue;
 
             this[name] = plugins[name];
@@ -67,7 +82,8 @@ module.exports = class Trakt {
 
     // Debug & Print
     _debug(req) {
-        this._settings.debug && console.log(req.method ? `${req.method}: ${req.url}` : req);
+        if (!this._settings.debug) return;
+        console.log(req.method ? `${req.method}: ${req.url}` : req);
     }
 
     // Authentication calls
@@ -75,24 +91,20 @@ module.exports = class Trakt {
         const req = {
             method: 'POST',
             url: `${this._settings.endpoint}/oauth/token`,
-            headers: {
-                'User-Agent': this._settings.useragent,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(str)
+            data: str,
         };
 
         this._debug(req);
-        return got(req).then(response => {
-            const body = JSON.parse(response.body);
+        return this._api(req).then(({ data }) => {
+            this._authentication.refresh_token = data.refresh_token;
+            this._authentication.access_token = data.access_token;
+            this._authentication.expires = (data.created_at + data.expires_in) * 1000;
 
-            this._authentication.refresh_token = body.refresh_token;
-            this._authentication.access_token = body.access_token;
-            this._authentication.expires = (body.created_at + body.expires_in) * 1000;
-
-            return this._sanitize(body);
+            return data;
         }).catch(error => {
-            throw (error.response && error.response.statusCode == 401) ? Error(error.response.headers['www-authenticate']) : error;
+            throw error.response?.statusCode == 401
+                ? Error(error.response.headers['www-authenticate'])
+                : error;
         });
     }
 
@@ -100,36 +112,30 @@ module.exports = class Trakt {
     _revoke() {
         const req = {
             method: 'POST',
-            url: `${this._settings.endpoint}/oauth/revoke`,
-            headers: {
-                'User-Agent': this._settings.useragent,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
+            url: '/oauth/revoke',
+            data: {
                 token: this._authentication.access_token,
                 client_id: this._settings.client_id,
-                client_secret: this._settings.client_secret
-            })
+                client_secret: this._settings.client_secret,
+            }
         };
         this._debug(req);
-        got(req);
+        return this._api(req);
     }
 
     // Get code to paste on login screen
     _device_code(str, type) {
         const req = {
             method: 'POST',
-            url: `${this._settings.endpoint}/oauth/device/${type}`,
-            headers: {
-                'User-Agent': this._settings.useragent,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(str)
+            url: `/oauth/device/${type}`,
+            data: str,
         };
 
         this._debug(req);
-        return got(req).then(response => this._sanitize(JSON.parse(response.body))).catch(error => {
-            throw (error.response && error.response.statusCode == 401) ? Error(error.response.headers['www-authenticate']) : error;
+        return this._api(req).then(({ data }) => data).catch(error => {
+            throw error.response?.statusCode == 401
+                ? Error(error.response.headers['www-authenticate'])
+                : error;
         });
     }
 
@@ -142,35 +148,44 @@ module.exports = class Trakt {
 
         // ?Part
         const queryPart = method.url.split('?')[1];
-        if (queryPart) {
-            const queryParams = queryPart.split('&');
-            for (let i in queryParams) {
-                const name = queryParams[i].split('=')[0];
-                (params[name] || params[name] === 0) && queryParts.push(`${name}=${encodeURIComponent(params[name])}`);
+        const queryParams = queryPart?.split('&') || [];
+        
+        for (const query of queryParams) {
+            const name = query.split('=')[0];
+            const param = params[name];
+            if (param || param === 0) {
+                queryParts.push(`${name}=${encodeURIComponent(param)}`);
             }
         }
-
+        
         // /part
         const pathPart = method.url.split('?')[0];
         const pathParams = pathPart.split('/');
-        for (let k in pathParams) {
-            if (pathParams[k][0] != ':') {
-                pathParts.push(pathParams[k]);
+        for (const path of pathParams) {
+            if (path[0] != ':') {
+                pathParts.push(path);
             } else {
-                const param = params[pathParams[k].substr(1)];
+                const name = path.substr(1);
+                const param = params[name];
                 if (param || param === 0) {
                     pathParts.push(param);
                 } else {
                     // check for missing required params
-                    if (method.optional && method.optional.indexOf(pathParams[k].substr(1)) === -1) throw Error(`Missing mandatory paramater: ${pathParams[k].substr(1)}`);
+                    if (method.optional?.indexOf(name) === -1) {
+                        throw Error(`Missing mandatory paramater: ${name}`);
+                    }
                 }
             }
         }
 
         // Filters
         const filters = ['query', 'years', 'genres', 'languages', 'countries', 'runtimes', 'ratings', 'certifications', 'networks', 'status'];
-        for (let p in params) {
-            filters.indexOf(p) !== -1 && queryParts.indexOf(`${p}=${encodeURIComponent(params[p])}`) === -1 && queryParts.push(`${p}=${encodeURIComponent(params[p])}`);
+        for (const p in params) {
+            if (!filters.contains(p)) continue;
+            const optionalQueryParam = `${p}=${encodeURIComponent(params[p])}`;
+            if (!queryParts.contains(optionalQueryParam)) {
+                queryParts.push(optionalQueryParam);
+            }
         }
 
         // Pagination
@@ -185,63 +200,56 @@ module.exports = class Trakt {
         }
 
         return [
-            this._settings.endpoint,
             pathParts.join('/'),
-            queryParts.length ? `?${queryParts.join('&')}` : ''
+            queryParts.length ? `?${queryParts.join('&')}` : '',
         ].join('');
     }
 
     // Parse methods then hit trakt
     _call(method, params) {
-        if (method.opts['auth'] === true && (!this._authentication.access_token || !this._settings.client_secret)) throw Error('OAuth required');
+        if (method.opts['auth'] === true) {
+            if (!this._authentication.access_token || !this._settings.client_secret) {
+                throw Error('OAuth required');
+            }
+        }
 
         const req = {
             method: method.method,
             url: this._parse(method, params),
             headers: {
-                'User-Agent': this._settings.useragent,
-                'Content-Type': 'application/json',
                 'trakt-api-version': '2',
-                'trakt-api-key': this._settings.client_id
+                'trakt-api-key': this._settings.client_id,
             },
-            body: (method.body ? Object.assign({}, method.body) : {})
+            data: (method.body ? Object.assign({}, method.body) : {}),
         };
 
-        if (method.opts['auth'] && this._authentication.access_token) req.headers['Authorization'] = `Bearer ${this._authentication.access_token}`;
-
-        for (let k in params) {
-            if (k in req.body) req.body[k] = params[k];
+        if (method.opts['auth'] && this._authentication.access_token) {
+            req.headers['Authorization'] = `Bearer ${this._authentication.access_token}`;
         }
-        for (let k in req.body) {
-            if (!req.body[k]) delete req.body[k];
+
+        for (const k in params) {
+            if (k in req.data) req.data[k] = params[k];
+        }
+        for (const k in req.data) {
+            if (!req.data[k]) delete req.data[k];
         }
 
         if (method.method === 'GET') {
-            delete req.body;
-        } else {
-            req.body = JSON.stringify(req.body);
+            delete req.data;
         }
 
         this._debug(req);
-        return got(req).then(response => this._parseResponse(method, params, response));
+        return this._api(req).then(response => this._parseResponse(method, params, response));
     }
 
     // Parse trakt response: pagination & stuff
-    _parseResponse (method, params, response) {
-        if (!response.body) return response.body;
+    _parseResponse (method, params, { data, headers }) {
+        let parsed;
 
-        const data = JSON.parse(response.body);
-        let parsed = data;
+        if (params?.pagination || this._settings.pagination) {
+            parsed = { data };
 
-        if ((params && params.pagination) || this._settings.pagination) {
-            parsed = {
-                data: data
-            };
-
-            if (method.opts.pagination && response.headers) {
-                // http headers field names are case-insensitive
-                let headers = JSON.parse(JSON.stringify(response.headers).toLowerCase());
-                
+            if (method.opts.pagination && headers) {
                 parsed.pagination = {
                     'item-count': headers['x-pagination-item-count'],
                     'limit': headers['x-pagination-limit'],
@@ -253,7 +261,7 @@ module.exports = class Trakt {
             }
         }
 
-        return this._sanitize(parsed);
+        return parsed || data;
     }
 
     // Sanitize output (xss)
@@ -262,11 +270,11 @@ module.exports = class Trakt {
 
         const sanitizeObject = obj => {
             const result = obj;
-            for (let prop in obj) {
+            for (const prop in obj) {
                 result[prop] = obj[prop];
-                if (obj[prop] && (obj[prop].constructor === Object || obj[prop].constructor === Array)) {
+                if (obj[prop]?.constructor === Object || obj[prop]?.constructor === Array) {
                     result[prop] = sanitizeObject(obj[prop]);
-                } else if (obj[prop] && obj[prop].constructor === String) {
+                } else if (obj[prop]?.constructor === String) {
                     result[prop] = sanitizeString(obj[prop]);
                 }
             }
@@ -274,9 +282,9 @@ module.exports = class Trakt {
         }
 
         let output = input;
-        if (input && (input.constructor === Object || input.constructor === Array)) {
+        if (input?.constructor === Object || input?.constructor === Array) {
             output = sanitizeObject(input);
-        } else if (input && input.constructor === String) {
+        } else if (input?.constructor === String) {
             output = sanitizeString(input);
         }
 
@@ -313,7 +321,9 @@ module.exports = class Trakt {
 
     // Calling trakt on a loop until it sends back a token
     poll_access(poll) {
-        if (!poll || (poll && poll.constructor !== Object)) throw Error('Invalid Poll object');
+        if (!poll || poll.constructor !== Object) {
+            throw Error('Invalid Poll object');
+        }
 
         const begin = Date.now();
 
@@ -337,16 +347,14 @@ module.exports = class Trakt {
                     resolve(body);
                 }).catch(error => {
                     // do nothing on 400
-                    if (error.response && error.response.statusCode === 400) return;
+                    if (error.response?.statusCode === 400) return;
 
                     clearInterval(polling);
                     reject(error);
                 });
             };
 
-            const polling = setInterval(() => {
-                call();
-            }, (poll.interval * 1000));
+            const polling = setInterval(call, poll.interval * 1000);
         });
     }
 
@@ -362,18 +370,14 @@ module.exports = class Trakt {
     }
 
     // Import token
-    import_token(token) {
+    async import_token(token) {
         this._authentication.access_token = token.access_token;
         this._authentication.expires = token.expires;
         this._authentication.refresh_token = token.refresh_token;
 
-        return new Promise((resolve, reject) => {
-            if (token.expires < Date.now()) {
-                this.refresh_token().then(() => resolve(this.export_token())).catch(reject);
-            } else {
-                resolve(this.export_token());
-            }
-        });
+        if (token.expires < Date.now()) await this.refresh_token();
+
+        return this.export_token();
     }
 
     // Export token
@@ -386,9 +390,9 @@ module.exports = class Trakt {
     }
 
     // Revoke token
-    revoke_token() {
+    async revoke_token() {
         if (this._authentication.access_token) {
-            this._revoke();
+            await this._revoke();
             this._authentication = {};
         }
     }
