@@ -11,6 +11,7 @@
     "main": "dist/trakt.min.js",
     "files": [
         "dist/trakt.min.js",
+        "dist/trakt.min.js.map",
         "dist/methods.json"
     ],
     "author": "Jean van Kasteel",

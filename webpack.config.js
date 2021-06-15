@@ -16,6 +16,7 @@ module.exports = {
        trakt: './trakt.js',
     },
     mode: 'production',
+    devtool: 'source-map',
     output: {
         filename: '[name].min.js',
         assetModuleFilename: '[file]',
