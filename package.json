@@ -8,7 +8,11 @@
         "wrapper",
         "node"
     ],
-    "main": "trakt.js",
+    "main": "dist/trakt.min.js",
+    "files": [
+        "dist/trakt.min.js",
+        "dist/methods.json"
+    ],
     "author": "Jean van Kasteel",
     "license": "MIT",
     "repository": {

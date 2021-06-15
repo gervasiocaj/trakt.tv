@@ -18,6 +18,7 @@ module.exports = {
     mode: 'production',
     output: {
         filename: '[name].min.js',
+        assetModuleFilename: '[file]',
         library: 'Trakt',
         libraryTarget: 'umd',
         globalObject: 'this',
