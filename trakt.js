@@ -1,19 +1,18 @@
 'use strict';
 
-// requirejs modules
-const axios = require('axios').default
-const randomBytes = require('randombytes');
-const methods = require('./methods.json');
-const sanitizer = require('sanitizer').sanitize;
-const pkg = require('./package.json');
+import axios from 'axios';
+import randomBytes from 'randombytes';
+import { sanitize as sanitizer } from 'sanitizer';
+import pkg from './package.json';
+import methods from './methods.json';
 
 // default settings
 const defaultUrl = 'https://api.trakt.tv';
 const redirectUrn = 'urn:ietf:wg:oauth:2.0:oob';
 const defaultUa = `${pkg.name}/${pkg.version} (NodeJS; +${pkg.repository.url})`;
 
-module.exports = class Trakt {
-    constructor(settings = {}, debug) {
+export class Trakt {
+    constructor(settings = {}, debug = false) {
         if (!settings.client_id) throw Error('Missing client_id');
 
         this._authentication = {};
@@ -36,7 +35,7 @@ module.exports = class Trakt {
             },
             transformResponse: [].concat(
                 axios.defaults.transformResponse,
-                (data) => this._settings.sanitize ? this._sanitize(data) : data,
+                (/** @type {Object} */ data) => this._settings.sanitize ? this._sanitize(data) : data,
             ),
         });
 
@@ -396,4 +395,4 @@ module.exports = class Trakt {
             this._authentication = {};
         }
     }
-};
+}

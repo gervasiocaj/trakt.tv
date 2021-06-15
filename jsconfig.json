@@ -1,0 +1,17 @@
+{
+    "compilerOptions": {
+        "lib": ["ESNext"],
+        "module": "umd",
+        "outDir": "dist",
+        "target": "es6",
+        "removeComments": true,
+        "sourceMap": true,
+        "checkJs": false,
+        "noImplicitAny": true,
+        "moduleResolution": "node",
+        "resolveJsonModule": false,
+        "esModuleInterop": true
+    },
+    "files": ["trakt.js", "trakt.d.ts"],
+    "exclude": ["node_modules"]
+}

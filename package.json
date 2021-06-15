@@ -25,9 +25,13 @@
     },
     "scripts": {
         "lint": "eslint trakt.js",
-        "docs": "node docs/methods-generator"
+        "docs": "node docs/methods-generator",
+        "build": "webpack",
+        "prepare": "npm run build"
     },
     "devDependencies": {
-        "eslint": "^7.27.0"
+        "eslint": "^7.27.0",
+        "webpack": "^5.38.1",
+        "webpack-cli": "^4.7.0"
     }
 }
